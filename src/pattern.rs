@@ -1,5 +1,3 @@
-use gl_lib::color::Color;
-
 #[derive(Default)]
 pub struct Pattern {
     rows_data: Vec::<Row>,
@@ -47,6 +45,7 @@ impl Pattern {
         self.rows_data[row].cell_count += 1;
 
     }
+
 
     pub fn remove_col_left(&mut self, row: usize) {
         self.rows_data[row].left_offset += 1;

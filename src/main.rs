@@ -1,7 +1,9 @@
 use gl_lib::imode_gui::Rect;
-use gl_lib::{gl, helpers, na, buffer};
+use gl_lib::{
+    gl, helpers, na, buffer};
 use gl_lib::imode_gui::drawer2d::*;
 use gl_lib::imode_gui::ui::*;
+use gl_lib::objects::{square, texture_quad};
 use gl_lib::color::Color;
 use gl_lib::collision2d::polygon;
 use gl_lib::imode_gui::style::BorderRadius;
@@ -27,14 +29,13 @@ fn main() -> Result<(), failure::Error> {
 
     let mut pattern = Pattern::default();
 
-    for r in 0..10 {
-        pattern.add_row(5 + ((10-r) / 2) );
+    for r in 0..30 {
+        pattern.add_row(5 + ((30-r) / 5) );
     }
 
 
     // maybe easier to just you know add support for at transform to the render code
     // instead of doing the framebuffer stuff
-    // TODO: set size of viewport as size of the
     let mut framebuffer = buffer::FrameBuffer::new(&gl, &viewport);
 
     framebuffer.r = 0.0;
@@ -45,20 +46,27 @@ fn main() -> Result<(), failure::Error> {
 
     let mut ctx = Context { pattern,
                             thick : 4,
-                            start_x : 200,
-                            start_y : 30,
-                            grid_width : 30,
-                            grid_height : 30,
+                            start_x : 400,
+                            start_y : 50,
+                            grid_width : 20,
+                            grid_height : 20,
                             base_color: Color::Rgb(30,30, 240),
                             color_1: Color::Rgb(250, 250, 250),
-                            draw_grid: true,
-                            mode: Mode::Edit,
-                            render_center : V2::new(200.0, 40.0),
+                            draw_grid: false,
+                            mode: Mode::Render,
+                            render_center : V2::new(400.0, 80.0),
                             framebuffer,
+                            texture_square: texture_quad::TextureQuad::new(gl),
+                            quad: square::Square::new(gl),
     };
 
 
 
+
+    update_render_obj_data(&mut ctx);
+
+
+    let mut clear_color = Color::RgbAf32(0.9, 0.9, 0.9, 1.0);
 
     loop {
 
@@ -66,7 +74,8 @@ fn main() -> Result<(), failure::Error> {
         unsafe {
             // set clear color every frame, since bind and clear in framebuffer also sets clear color
             // and opengl is state full, so the clear color is not per frame buffer, but global
-            gl.ClearColor(0.9, 0.9, 0.9, 1.0);
+            let cc = clear_color.as_vec4();
+            gl.ClearColor(cc.x, cc.y, cc.z, cc.w);
             gl.Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
         }
 
@@ -95,6 +104,9 @@ fn main() -> Result<(), failure::Error> {
         if ui.button("Change") {
 
         }
+        ui.newline();
+
+        ui.color_picker(&mut clear_color);
         ui.newline();
 
         window.gl_swap_window();
@@ -126,7 +138,7 @@ fn edit_view(ctx: &mut Context, ui: &mut Ui) {
     if ui.button("Rest") {
         let mut pattern = Pattern::default();
 
-        for r in 0..10 {
+        for r in 0..30 {
             pattern.add_row(5 + ((10-r) / 2) );
         }
 
@@ -177,8 +189,88 @@ fn render_to_framebuffer(ctx: &mut Context, ui: &mut Ui) {
     ctx.start_x = 0;
     ctx.start_y = 0;
 
-    render_pattern(ctx, ui, false);
 
+    //render_pattern(ctx, ui, false);
+
+    let grid_h = (ctx.pattern.rows() as i32 * ctx.grid_height) as f32;
+
+    // render flipped
+    let vh = ui.drawer2D.viewport.h as f32;
+    let base = vh - grid_h;// base offset for drawing flipped and takine sdl inverse coordinate system into consideration
+
+
+    let w_top = ctx.pattern.cols(0) as i32 * ctx.grid_width;
+    let w_bot = ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width;
+    let w_diff = (w_top - w_bot) as f32; // length of bottom of triangle
+
+
+    for r in 0..ctx.pattern.rows() {
+
+        // TODO: calc difference needed for top and bottom to match the line,
+        // add the difference spread out on all the cells
+        // width at the top of row when smoothing in and out takes
+
+        let h_top = ((ctx.pattern.rows() - r) as i32 * ctx.grid_height) as f32;
+
+        let extra_width = w_diff * h_top / grid_h;
+
+        // calc target width for row
+        // w_bot is the min length, then add extra_width
+        let target_w = extra_width as f32 + w_bot as f32;
+
+        // calc actual width
+
+        let actual_w = (ctx.pattern.cols(r)  as i32 * ctx.grid_width) as f32;
+
+
+        // calc how much stretch this row needs
+
+        let row_extra_w = target_w - actual_w;
+
+
+        println!("{:?}", (r, target_w, actual_w));
+
+        for c in ctx.pattern.left_start(r)..ctx.pattern.cols(r) {
+
+            let re = rect_for_cell(ctx, r as i32, c as i32);
+
+            // extra width sould be added gradually
+            let e_w = row_extra_w / ctx.pattern.cols(r) as f32;
+            let prev_offset = c as f32 * e_w;
+
+            let this_offset = e_w;
+
+            let left_offset = prev_offset;
+            let right_offset = prev_offset + this_offset;
+
+            // left offset is: 0 + prev offset
+            // right is prev offset + this offset
+
+
+            let left = left_offset + re.x as f32;
+            let right = right_offset + (re.x + re.w) as f32;
+
+
+            if r == 8 {
+                //println!("{:.2?}", (c, extra_width, left, right, prev_offset, this_offset));
+            }
+
+            // since sdl is inverse, so y=0 is top, and y = view.h is bottom, we have to inverse the y
+            // br -> tr -> tl -> bl
+            ctx.quad.sub_data_all(&[right, base + re.y as f32,
+                                    right, base + (re.y + re.h) as f32,
+                                    left,  base + (re.y + re.h) as f32,
+                                    left,  base + re.y as f32
+            ]);
+
+            //ui.drawer2D.rounded_rect_color(re.x, re.y , re.w, re.h, 0.0, color);
+            ui.drawer2D.render_viewport_obj(&ctx.quad, ctx.color(r, c));
+        }
+
+    }
+
+
+    //println!("\n\n\n");
     ctx.start_x = start_x;
     ctx.start_y = start_y;
 
@@ -209,6 +301,35 @@ fn render_view(ctx: &mut Context, ui: &mut Ui) {
 }
 
 
+// just flip on y axis
+fn update_render_obj_data(ctx: &mut Context) {
+    let pos_data: [f32; 12] = [
+        // positions
+        0.5,  0.5, 0.0, // rt
+        -0.5,  0.5, 0.0, // lt
+        -0.5, -0.5, 0.0,// lb
+        0.5, -0.5, 0.0, // rb
+    ];
+
+    let l = 0.0;
+    let b = 0.0;
+    let r = 1.0;
+    let t = 1.0;
+
+    let tex_data = [
+        r, t,
+        l, t,
+        l, b,
+        r, b
+    ];
+
+
+    // flip top and bottom coords to flip image on its head
+    // update texture coords to match poly
+    ctx.texture_square.sub_data(&pos_data, &tex_data);
+
+}
+
 fn render_polys(ctx: &mut Context, ui: &mut Ui) {
 
     // use the pattern poly to render
@@ -217,21 +338,13 @@ fn render_polys(ctx: &mut Context, ui: &mut Ui) {
 
     ui.drag_point(&mut ctx.render_center, 10.0);
 
+    draw_single_polygon(ctx, ui, 0, &poly, angle, small_w);
 
-    let size = poly.bounding_box_size();
+    //draw_single_polygon(ctx, ui, 1, &poly, angle, small_w);
 
-    // flip top and bottom coords to flip image on its head
-    // update texture coords to match poly
-    ui.drawer2D.texture_square.sub_tex_coord_data(&ui.drawer2D.gl,
-                                                  0.0,
-                                                  size.x / ui.drawer2D.viewport.w as f32,
-                                                  1.0 - (size.y / ui.drawer2D.viewport.h as f32),
-                                                  1.0,
-                                                  );
+    //draw_single_polygon(ctx, ui, -1, &poly, angle, small_w);
 
-
-
-
+/*
     let mut transform = polygon::PolygonTransform {
         translation: ctx.render_center,
         rotation: 0.0,
@@ -256,6 +369,65 @@ fn render_polys(ctx: &mut Context, ui: &mut Ui) {
                                size);
 
 
+    transform.rotation += angle * 2.0;
+    transform.translation.x -= small_w * 2.0;
+
+    ui.view_polygon(&poly, &transform);
+    ui.drawer2D.render_img_rot(ctx.framebuffer.color_tex,
+                               (ctx.render_center.x  + small_w) as i32,
+                               ctx.render_center.y as i32,
+                               RotationWithOrigin::TopLeft(angle),
+                               size);
+
+
+*/
+}
+
+
+/// Offset 0 is middle, negative is to thje left, positive to the right
+fn draw_single_polygon(ctx: &mut Context, ui: &mut Ui, offset_i: i32, poly: &polygon::Polygon, angle: f32, small_w: f32) {
+
+    let offset = offset_i as f32;
+
+
+    let transform = polygon::PolygonTransform {
+        translation: ctx.render_center + V2::new(offset * small_w, 0.0),
+        rotation: angle * -offset as f32,
+        scale: 1.0,
+        flip_y: false
+    };
+
+
+    ui.view_polygon(&poly, &transform);
+
+
+    // when rotation we do it around the TopLeft corner
+    // when offset is >= 0 we want the top left corner to match up to the prev, so we do nothing
+    // when < 0, we want the top right corner to match up, and need to compensate, since it was pushed down, and a bit to the
+    // left by the rotation
+
+    let mut correction = V2::new(small_w * offset, 0.0);
+
+    if offset_i < 0 {
+        // we know small w and angle
+        correction.x = angle.cos() * small_w;
+        //println!("{:?}", (small_w, (angle.cos() * small_w)));
+        //correction.y = angle.cos() * small_w;
+    }
+
+
+    // calc how much the top left corner got pushed left and down / up and right, and compensate for it
+
+    let final_pos = ctx.render_center + correction;
+
+    let s = V2::new(ui.drawer2D.viewport.w as f32, ui.drawer2D.viewport.h as f32);
+
+    ui.drawer2D.render_img_custom_obj(ctx.framebuffer.color_tex,
+                                      &ctx.texture_square,
+                                      final_pos.x as i32,
+                                      final_pos.y as i32,
+                                      RotationWithOrigin::TopLeft(angle * offset),
+                                      s);
 
 }
 
@@ -305,7 +477,7 @@ fn render_pattern(ctx: &mut Context, ui: &mut Ui, editable: bool) {
                     }
                 }
             } else { // render as rects
-                ui.drawer2D.rounded_rect_color(btn_rect.x + 1, btn_rect.y + 1 , btn_rect.w - 2, btn_rect.h - 2, 0.0, ui.style.button.color);
+                ui.drawer2D.rounded_rect_color(btn_rect.x, btn_rect.y , btn_rect.w, btn_rect.h, 0.0, ui.style.button.color);
             }
         }
 
@@ -333,7 +505,7 @@ fn edit_pattern(ctx: &mut Context, ui: &mut Ui) {
     for r in 0..ctx.pattern.rows() {
         // LEFT BUTTONS
         // subtract column button
-        let mut sub_rect = rect_for_cell(ctx, r as i32,  -2);
+        let sub_rect = rect_for_cell(ctx, r as i32,  -2);
 
         if ui.button_at_text_fixed("-", sub_rect) {
             for i in 0..=r {
@@ -347,7 +519,7 @@ fn edit_pattern(ctx: &mut Context, ui: &mut Ui) {
         }
 
         // add column button
-        let mut add_rect = rect_for_cell(ctx, r as i32, -1);
+        let add_rect = rect_for_cell(ctx, r as i32, -1);
 
         if ui.button_at_text_fixed("+", add_rect) {
             for i in 0..=r {
@@ -364,7 +536,7 @@ fn edit_pattern(ctx: &mut Context, ui: &mut Ui) {
         // RIGHT BUTTONS
 
         // subtract column button
-        let mut sub_rect = rect_for_cell(ctx, r as i32,  ctx.pattern.cols(r) as i32);
+        let sub_rect = rect_for_cell(ctx, r as i32,  ctx.pattern.cols(r) as i32);
 
         if ui.button_at_text_fixed("-", sub_rect) {
             for i in 0..(r + 1) {
@@ -373,7 +545,7 @@ fn edit_pattern(ctx: &mut Context, ui: &mut Ui) {
         }
 
         // add column button
-        let mut add_rect = rect_for_cell(ctx, r as i32, ctx.pattern.cols(r) as i32 + 1);
+        let add_rect = rect_for_cell(ctx, r as i32, ctx.pattern.cols(r) as i32 + 1);
 
         if ui.button_at_text_fixed("+", add_rect) {
 
@@ -384,13 +556,16 @@ fn edit_pattern(ctx: &mut Context, ui: &mut Ui) {
     }
 }
 
+
 fn rect_for_cell(ctx: &Context, row: i32, col: i32) -> Rect {
 
 
-    let x = ctx.start_x + ctx.thick/2 + col * ctx.grid_width;
-    let y = ctx.start_y + ctx.thick/2 + row * ctx.grid_height;
-    let w = ctx.grid_width - ctx.thick;
-    let h = ctx.grid_height - ctx.thick;
+    let thick = if ctx.draw_grid { ctx.thick } else { 0 };
+
+    let x = ctx.start_x + thick/2 + col * ctx.grid_width;
+    let y = ctx.start_y + thick/2 + row * ctx.grid_height;
+    let w = ctx.grid_width - thick;
+    let h = ctx.grid_height - thick;
 
     Rect {x, y , w , h: h }
 
@@ -419,6 +594,8 @@ struct Context {
     render_center: V2,
 
     framebuffer: buffer::FrameBuffer,
+    texture_square: texture_quad::TextureQuad,
+    quad: square::Square,
 }
 
 impl Context {
