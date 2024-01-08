@@ -29,8 +29,17 @@ fn main() -> Result<(), failure::Error> {
 
     let mut pattern = Pattern::default();
 
-    for r in 0..30 {
-        pattern.add_row(5 + ((30-r) / 5) );
+    for r in 0..20 {
+        let cols = 5 + ((20-r) / 5) ;
+        pattern.add_row(cols);
+        /*
+        for c in 0..cols {
+        if r % 2 == 1 && c % 2 == 1 {
+         *pattern.cell_mut(r, c) = Cell::Color1;
+    }
+    }
+         */
+
     }
 
 
@@ -54,7 +63,7 @@ fn main() -> Result<(), failure::Error> {
                             color_1: Color::Rgb(250, 250, 250),
                             draw_grid: false,
                             mode: Mode::Render,
-                            render_center : V2::new(400.0, 80.0),
+                            render_center : V2::new(800.0, 80.0),
                             framebuffer,
                             texture_square: texture_quad::TextureQuad::new(gl),
                             quad: square::Square::new(gl),
@@ -85,10 +94,15 @@ fn main() -> Result<(), failure::Error> {
         ui.newline();
 
 
+        render_view(&mut ctx, &mut ui);
+        edit_view(&mut ctx, &mut ui);
+
+        /*
         match ctx.mode {
             Mode::Edit => edit_view(&mut ctx, &mut ui),
             Mode::Render => render_view(&mut ctx, &mut ui),
         };
+         */
 
         ui.newline();
         if ui.button("Reload shaders") {
@@ -138,7 +152,7 @@ fn edit_view(ctx: &mut Context, ui: &mut Ui) {
     if ui.button("Rest") {
         let mut pattern = Pattern::default();
 
-        for r in 0..30 {
+        for r in 0..20 {
             pattern.add_row(5 + ((10-r) / 2) );
         }
 
@@ -199,68 +213,22 @@ fn render_to_framebuffer(ctx: &mut Context, ui: &mut Ui) {
     let base = vh - grid_h;// base offset for drawing flipped and takine sdl inverse coordinate system into consideration
 
 
-    let w_top = ctx.pattern.cols(0) as i32 * ctx.grid_width;
+    // render a red square around the base rect
     let w_bot = ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width;
-    let w_diff = (w_top - w_bot) as f32; // length of bottom of triangle
-
 
     for r in 0..ctx.pattern.rows() {
-
-        // TODO: calc difference needed for top and bottom to match the line,
-        // add the difference spread out on all the cells
-        // width at the top of row when smoothing in and out takes
-
-        let h_top = ((ctx.pattern.rows() - r) as i32 * ctx.grid_height) as f32;
-
-        let extra_width = w_diff * h_top / grid_h;
-
-        // calc target width for row
-        // w_bot is the min length, then add extra_width
-        let target_w = extra_width as f32 + w_bot as f32;
-
-        // calc actual width
-
-        let actual_w = (ctx.pattern.cols(r)  as i32 * ctx.grid_width) as f32;
-
-
-        // calc how much stretch this row needs
-
-        let row_extra_w = target_w - actual_w;
-
-
-        println!("{:?}", (r, target_w, actual_w));
-
         for c in ctx.pattern.left_start(r)..ctx.pattern.cols(r) {
 
             let re = rect_for_cell(ctx, r as i32, c as i32);
-
-            // extra width sould be added gradually
-            let e_w = row_extra_w / ctx.pattern.cols(r) as f32;
-            let prev_offset = c as f32 * e_w;
-
-            let this_offset = e_w;
-
-            let left_offset = prev_offset;
-            let right_offset = prev_offset + this_offset;
-
-            // left offset is: 0 + prev offset
-            // right is prev offset + this offset
-
-
-            let left = left_offset + re.x as f32;
-            let right = right_offset + (re.x + re.w) as f32;
-
-
-            if r == 8 {
-                //println!("{:.2?}", (c, extra_width, left, right, prev_offset, this_offset));
-            }
+            let (top_left, top_right) = calc_left_and_right(ctx, r, c, true);
+            let (bot_left, bot_right) = calc_left_and_right(ctx, r , c, false);
 
             // since sdl is inverse, so y=0 is top, and y = view.h is bottom, we have to inverse the y
             // br -> tr -> tl -> bl
-            ctx.quad.sub_data_all(&[right, base + re.y as f32,
-                                    right, base + (re.y + re.h) as f32,
-                                    left,  base + (re.y + re.h) as f32,
-                                    left,  base + re.y as f32
+            ctx.quad.sub_data_all(&[bot_right, base + re.y as f32,
+                                    top_right, base + (re.y + re.h) as f32,
+                                    top_left,  base + (re.y + re.h) as f32,
+                                    bot_left,  base + re.y as f32
             ]);
 
             //ui.drawer2D.rounded_rect_color(re.x, re.y , re.w, re.h, 0.0, color);
@@ -270,13 +238,64 @@ fn render_to_framebuffer(ctx: &mut Context, ui: &mut Ui) {
     }
 
 
-    //println!("\n\n\n");
     ctx.start_x = start_x;
     ctx.start_y = start_y;
 
     // unbind framebuffer to render to regular viewport again
     ctx.framebuffer.unbind();
 }
+
+fn calc_extra_width(ctx: &Context, r: usize, w_diff: f32, top: bool) -> f32 {
+
+    let extra_row = if top { 1 } else { 0 };
+    // width of largest row
+    let w_bot = ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width;
+    let grid_h = (ctx.pattern.rows() as i32 * ctx.grid_height) as f32;
+
+    // height of this row
+    let row_h = ((ctx.pattern.rows() - (r + extra_row)) as i32 * ctx.grid_height) as f32;
+
+
+    // scale difference bottom
+    let extra_width = w_diff * row_h / grid_h;
+
+    // calc target width for row
+    // w_bot is the min length, then add extra_width
+    let target_w = extra_width as f32 + w_bot as f32;
+
+    // calc actual width
+    let actual_w = (ctx.pattern.cols(r)  as i32 * ctx.grid_width) as f32;
+
+    // calc how much stretch this row needs
+
+    target_w - actual_w
+}
+
+fn calc_left_and_right(ctx: &Context, r: usize, c: usize, top: bool) -> (f32, f32) {
+
+    let w_top = ctx.pattern.cols(0) as i32 * ctx.grid_width;
+    let w_bot = ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width;
+    let w_diff = (w_top - w_bot) as f32; // length of bottom of triangle
+
+    let extra_w = calc_extra_width(ctx, r, w_diff, top);
+
+    let re = rect_for_cell(ctx, r as i32, c as i32);
+
+    // extra width sould be added gradually
+    let e_w = extra_w / ctx.pattern.cols(r) as f32;
+    let prev_offset = c as f32 * e_w;
+
+    let this_offset = e_w;
+
+    let left_offset = prev_offset;
+    let right_offset = prev_offset + this_offset;
+
+    let left = left_offset + re.x as f32;
+    let right = right_offset + (re.x + re.w) as f32;
+
+    (left, right)
+}
+
 
 fn render_view(ctx: &mut Context, ui: &mut Ui) {
 
@@ -340,7 +359,7 @@ fn render_polys(ctx: &mut Context, ui: &mut Ui) {
 
     draw_single_polygon(ctx, ui, 0, &poly, angle, small_w);
 
-    //draw_single_polygon(ctx, ui, 1, &poly, angle, small_w);
+    draw_single_polygon(ctx, ui, 1, &poly, angle, small_w);
 
     //draw_single_polygon(ctx, ui, -1, &poly, angle, small_w);
 
@@ -409,10 +428,7 @@ fn draw_single_polygon(ctx: &mut Context, ui: &mut Ui, offset_i: i32, poly: &pol
     let mut correction = V2::new(small_w * offset, 0.0);
 
     if offset_i < 0 {
-        // we know small w and angle
         correction.x = angle.cos() * small_w;
-        //println!("{:?}", (small_w, (angle.cos() * small_w)));
-        //correction.y = angle.cos() * small_w;
     }
 
 
@@ -457,10 +473,6 @@ fn render_pattern(ctx: &mut Context, ui: &mut Ui, editable: bool) {
             }
 
             let btn_rect = rect_for_cell(ctx, r as i32, c as i32);
-
-            if r == 9 && c == 4 {
-                //println!("r=1 c =1 {:?}", btn_rect);
-            }
 
             if ctx.pattern.cell(r, c).is_color() {
                 ui.style.button.color = ctx.color(r,c);
