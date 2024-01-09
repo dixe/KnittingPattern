@@ -1,5 +1,5 @@
 use gl_lib::imode_gui::Rect;
-use gl_lib::{
+use gl_lib::{ sdl2,
     gl, helpers, na, buffer};
 use gl_lib::imode_gui::drawer2d::*;
 use gl_lib::imode_gui::ui::*;
@@ -29,9 +29,14 @@ fn main() -> Result<(), failure::Error> {
 
     let mut pattern = Pattern::default();
 
-    for r in 0..20 {
-        let cols = 5 + ((20-r) / 5) ;
+    let mut cols = 20;
+    for r in 0..27 {
         pattern.add_row(cols);
+
+        if r == 7 || r == 15 || r == 23 {
+            cols += 1;
+        }
+
         /*
         for c in 0..cols {
         if r % 2 == 1 && c % 2 == 1 {
@@ -55,7 +60,7 @@ fn main() -> Result<(), failure::Error> {
 
     let mut ctx = Context { pattern,
                             thick : 4,
-                            start_x : 400,
+                            start_x : 250,
                             start_y : 50,
                             grid_width : 20,
                             grid_height : 20,
@@ -89,6 +94,16 @@ fn main() -> Result<(), failure::Error> {
         }
 
         ui.consume_events(&mut event_pump);
+
+        for e in &ui.frame_events {
+            match e {
+                sdl2::event::Event::Window {win_event: sdl2::event::WindowEvent::Resized(w, h), .. } => {
+                    ctx.framebuffer.update_viewport(&gl, &gl::viewport::Viewport {x: 0, y: 0, w: *w, h: *h });
+                },
+                _ => {}
+            };
+        }
+
 
         ui.body_text(&format!("{}", ui.fps()));
         ui.newline();
@@ -165,10 +180,9 @@ fn edit_view(ctx: &mut Context, ui: &mut Ui) {
 
 
 fn create_polygon(ctx: &Context) -> (polygon::Polygon, f32, f32) {
-    let large_w = (ctx.pattern.cols(
-        0) as i32 * ctx.grid_width) as f32;
+    let large_w = (ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width) as f32;
 
-    let small_w = (ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width) as f32;
+    let small_w = (ctx.pattern.cols(0) as i32 * ctx.grid_width) as f32;
     let h = (ctx.pattern.rows() as i32 * ctx.grid_height) as f32;
 
     let poly = polygon::Polygon { vertices: vec![V2::new(0.0, 0.0),
@@ -203,18 +217,9 @@ fn render_to_framebuffer(ctx: &mut Context, ui: &mut Ui) {
     ctx.start_x = 0;
     ctx.start_y = 0;
 
-
-    //render_pattern(ctx, ui, false);
-
-    let grid_h = (ctx.pattern.rows() as i32 * ctx.grid_height) as f32;
-
     // render flipped
     let vh = ui.drawer2D.viewport.h as f32;
-    let base = vh - grid_h;// base offset for drawing flipped and takine sdl inverse coordinate system into consideration
-
-
-    // render a red square around the base rect
-    let w_bot = ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width;
+    let base = vh;
 
     for r in 0..ctx.pattern.rows() {
         for c in ctx.pattern.left_start(r)..ctx.pattern.cols(r) {
@@ -225,10 +230,10 @@ fn render_to_framebuffer(ctx: &mut Context, ui: &mut Ui) {
 
             // since sdl is inverse, so y=0 is top, and y = view.h is bottom, we have to inverse the y
             // br -> tr -> tl -> bl
-            ctx.quad.sub_data_all(&[bot_right, base + re.y as f32,
-                                    top_right, base + (re.y + re.h) as f32,
-                                    top_left,  base + (re.y + re.h) as f32,
-                                    bot_left,  base + re.y as f32
+            ctx.quad.sub_data_all(&[bot_right, base - re.y as f32,
+                                    top_right, base - (re.y + re.h) as f32,
+                                    top_left,  base - (re.y + re.h) as f32,
+                                    bot_left,  base - re.y as f32
             ]);
 
             //ui.drawer2D.rounded_rect_color(re.x, re.y , re.w, re.h, 0.0, color);
@@ -248,20 +253,21 @@ fn render_to_framebuffer(ctx: &mut Context, ui: &mut Ui) {
 fn calc_extra_width(ctx: &Context, r: usize, w_diff: f32, top: bool) -> f32 {
 
     let extra_row = if top { 1 } else { 0 };
+
     // width of largest row
-    let w_bot = ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width;
+    let w_min = ctx.pattern.cols(0) as i32 * ctx.grid_width;
     let grid_h = (ctx.pattern.rows() as i32 * ctx.grid_height) as f32;
 
     // height of this row
-    let row_h = ((ctx.pattern.rows() - (r + extra_row)) as i32 * ctx.grid_height) as f32;
+    let row_h = ((r + extra_row) as i32 * ctx.grid_height) as f32;
 
 
     // scale difference bottom
     let extra_width = w_diff * row_h / grid_h;
 
     // calc target width for row
-    // w_bot is the min length, then add extra_width
-    let target_w = extra_width as f32 + w_bot as f32;
+    // w_min is the min length, then add extra_width
+    let target_w = extra_width as f32 + w_min as f32;
 
     // calc actual width
     let actual_w = (ctx.pattern.cols(r)  as i32 * ctx.grid_width) as f32;
@@ -275,7 +281,7 @@ fn calc_left_and_right(ctx: &Context, r: usize, c: usize, top: bool) -> (f32, f3
 
     let w_top = ctx.pattern.cols(0) as i32 * ctx.grid_width;
     let w_bot = ctx.pattern.cols(ctx.pattern.rows() - 1) as i32 * ctx.grid_width;
-    let w_diff = (w_top - w_bot) as f32; // length of bottom of triangle
+    let w_diff = (w_bot - w_top) as f32; // length of bottom of triangle
 
     let extra_w = calc_extra_width(ctx, r, w_diff, top);
 
@@ -324,10 +330,10 @@ fn render_view(ctx: &mut Context, ui: &mut Ui) {
 fn update_render_obj_data(ctx: &mut Context) {
     let pos_data: [f32; 12] = [
         // positions
-        0.5,  0.5, 0.0, // rt
-        -0.5,  0.5, 0.0, // lt
-        -0.5, -0.5, 0.0,// lb
-        0.5, -0.5, 0.0, // rb
+        0.5,  0.5, 0.0, // tr
+        -0.5,  0.5, 0.0, // tl
+        -0.5, -0.5, 0.0,// bl
+        0.5, -0.5, 0.0, // br
     ];
 
     let l = 0.0;
@@ -407,14 +413,13 @@ fn render_polys(ctx: &mut Context, ui: &mut Ui) {
 fn draw_single_polygon(ctx: &mut Context, ui: &mut Ui, offset_i: i32, poly: &polygon::Polygon, angle: f32, small_w: f32) {
 
     let offset = offset_i as f32;
-
-
     let transform = polygon::PolygonTransform {
         translation: ctx.render_center + V2::new(offset * small_w, 0.0),
         rotation: angle * -offset as f32,
         scale: 1.0,
         flip_y: false
     };
+
 
 
     ui.view_polygon(&poly, &transform);
