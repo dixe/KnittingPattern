@@ -1,12 +1,12 @@
 use gl_lib::imode_gui::Rect;
 use gl_lib::{ sdl2,
-              gl, helpers, na, buffer};
+              gl, helpers, buffer};
 use gl_lib::imode_gui::drawer2d::*;
 use gl_lib::imode_gui::ui::*;
 use gl_lib::imode_gui::widgets::*;
 use gl_lib::objects::{square, texture_quad};
 use gl_lib::color::Color;
-use gl_lib::typedef::{V2, V3};
+use gl_lib::typedef::V2;
 use gl_lib::collision2d::polygon;
 use gl_lib::imode_gui::style::BorderRadius;
 mod pattern;
