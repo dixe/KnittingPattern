@@ -1,4 +1,4 @@
-use super::{gl, Ui, Context, rect_for_cell, RotationWithOrigin, V2, polygon};
+use super::{gl, Color, Ui, Context, Pattern, rect_for_cell, RotationWithOrigin, V2, polygon};
 
 pub fn view(ctx: &mut Context, ui: &mut Ui) {
 
@@ -125,21 +125,119 @@ fn render_polys(ctx: &mut Context, ui: &mut Ui) {
 
     ui.drag_point(&mut ctx.render_center, 10.0);
 
-    draw_single_polygon(ctx, ui, 0, &poly);
 
+    let (a_left, a_right) = draw_middle_polygon(ctx, ui, &poly);
+
+    draw_left_polygon(ctx, ui, a_left, &poly);
+/*
     draw_single_polygon(ctx, ui, 1, &poly);
 
-    //draw_single_polygon(ctx, ui, -1, &poly, angle, small_w);
-
+    draw_single_polygon(ctx, ui, -1, &poly);
+*/
 }
 
 
+#[derive(Clone, Copy, Debug)]
+struct AnchorPoint {
+    pos: V2,
+    angle: f32 // angle of the seam line
+}
+
+fn draw_middle_polygon(ctx: &mut Context, ui: &mut Ui, pp: &PatternPoly) -> (AnchorPoint, AnchorPoint) {
+
+    let transform = polygon::PolygonTransform {
+        translation: ctx.render_center,
+        rotation: 0.0,
+        scale: 1.0,
+        flip_y: false
+    };
+
+    ui.view_polygon(&pp.poly, &transform);
+
+    let final_pos = ctx.render_center;
+    let s = V2::new(ui.drawer2D.viewport.w as f32, ui.drawer2D.viewport.h as f32);
+    ui.drawer2D.render_img_custom_obj(ctx.framebuffer.color_tex,
+                                      &ctx.texture_square,
+                                      final_pos.x as i32,
+                                      final_pos.y as i32,
+                                      RotationWithOrigin::TopLeft(0.0),
+                                      s);
+
+
+    let left_anchor = AnchorPoint {
+        pos: ctx.render_center + V2::new((ctx.pattern.left_start(0) as i32 * ctx.grid_width) as f32, 0.0),
+        angle: angle_left(ctx, &ctx.pattern)
+    };
+
+    let right_anchor = AnchorPoint{
+        pos: ctx.render_center + V2::new((ctx.pattern.cols(0) as i32 * ctx.grid_width) as f32, 0.0),
+        angle: angle_right(ctx, &ctx.pattern)
+    };
+
+    // debug show points
+    ui.drawer2D.rect_color(left_anchor.pos.x, left_anchor.pos.y, 5, 5, Color::red());
+
+    ui.drawer2D.rect_color(right_anchor.pos.x, right_anchor.pos.y, 5, 5, Color::red());
+
+    (left_anchor, right_anchor)
+}
+
+
+fn draw_left_polygon(ctx: &mut Context, ui: &mut Ui, anchor: AnchorPoint, pp: &PatternPoly) -> (AnchorPoint, AnchorPoint) {
+
+
+    // move polygon to the left, so out right cornor matches anchor point. Rotate around the top right corner
+    let offset = -V2::new((ctx.pattern.cols(0) as i32 * ctx.grid_width) as f32, 0.0);
+
+    let final_angle = anchor.angle + angle_right(ctx, &ctx.pattern);
+
+    let transform = polygon::PolygonTransform {
+        translation: anchor.pos + offset,
+        rotation: final_angle,
+        scale: 1.0,
+        flip_y: false
+    };
+
+    ui.view_polygon(&pp.poly, &transform);
+
+    let final_pos = anchor.pos + offset;
+    let s = V2::new(ui.drawer2D.viewport.w as f32, ui.drawer2D.viewport.h as f32);
+    ui.drawer2D.render_img_custom_obj(ctx.framebuffer.color_tex,
+                                      &ctx.texture_square,
+                                      final_pos.x as i32,
+                                      final_pos.y as i32,
+                                      RotationWithOrigin::Point(-offset, -final_angle),
+                                      //RotationWithOrigin::Point(V2::new(0.0, 0.0), -std::f32::consts::PI / 2.0), //:-final_angle * 2.4),
+                                      //RotationWithOrigin::TopLeft(-std::f32::consts::PI / 2.0), //:-final_angle * 2.4,)
+                                      s);
+
+
+    let left_anchor = AnchorPoint {
+        pos: anchor.pos,
+        angle: 0.0
+    };
+
+    let right_anchor = AnchorPoint{
+        pos: V2::new((ctx.pattern.cols(0) as i32 * ctx.grid_width) as f32, 0.0),
+        angle: 0.0
+    };
+
+    // debug show points
+    //ui.drawer2D.rect_color(left_anchor.pos.x, left_anchor.pos.y, 5, 5, Color::green());
+
+    //ui.drawer2D.rect_color(right_anchor.pos.x, right_anchor.pos.y, 5, 5, Color::green());
+
+    (left_anchor, right_anchor)
+}
+
 
 /// Offset 0 is middle, negative is to the left, positive to the right
+/// returns the left and right top anchor points
 fn draw_single_polygon(ctx: &mut Context, ui: &mut Ui, offset_i: i32, pp: &PatternPoly) {
 
-    let small_w = 1.0;
-    let angle = 0.0;
+    let small_w = ctx.top_length();
+    let angle = 0.0; //ctx.angle_right();
+
     let offset = offset_i as f32;
     let transform = polygon::PolygonTransform {
         translation: ctx.render_center + V2::new(offset * small_w, 0.0),
@@ -157,11 +255,6 @@ fn draw_single_polygon(ctx: &mut Context, ui: &mut Ui, offset_i: i32, pp: &Patte
 
     let mut correction = V2::new(small_w * offset, 0.0);
 
-    if offset_i < 0 {
-        correction.x = angle.cos() * small_w;
-    }
-
-
     // calc how much the top left corner got pushed left and down / up and right, and compensate for it
 
     let final_pos = ctx.render_center + correction;
@@ -177,6 +270,10 @@ fn draw_single_polygon(ctx: &mut Context, ui: &mut Ui, offset_i: i32, pp: &Patte
 
     ui.view_polygon(&pp.poly, &transform);
 }
+
+
+
+
 
 fn create_polygon(ctx: &Context) -> PatternPoly {
 
@@ -194,11 +291,10 @@ fn create_polygon(ctx: &Context) -> PatternPoly {
                                                  V2::new(0.0, h)]
     };
 
-
     let a = (large_w - small_w) as f32;
     let b = h as f32;
 
-    let angle = (a / b).atan();
+
 
     PatternPoly {
         poly
@@ -208,4 +304,27 @@ fn create_polygon(ctx: &Context) -> PatternPoly {
 
 pub struct PatternPoly {
     poly: polygon::Polygon
+}
+
+
+
+
+fn angle_right(ctx: &Context, pattern: &Pattern) -> f32 {
+    // width of right triangle bottom
+    let a = ((pattern.cols(pattern.rows() - 1) - pattern.cols(0)) as i32 * ctx.grid_width) as f32;
+
+    // height of grid
+    let b = (pattern.rows() as i32 * ctx.grid_height) as f32;
+
+    (a / b).atan()
+}
+
+
+pub fn angle_left(ctx: &Context, pattern: &Pattern) -> f32 {
+    let a = (pattern.left_start(0) as i32 * ctx.grid_width) as f32;
+
+    // height of grid
+    let b = (pattern.rows() as i32 * ctx.grid_height) as f32;
+
+    (a / b).atan()
 }

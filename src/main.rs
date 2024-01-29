@@ -21,14 +21,14 @@ fn main() -> Result<(), failure::Error> {
     let sdl = sdl_setup.sdl;
     let viewport = sdl_setup.viewport;
     let gl = &sdl_setup.gl;
-
+    let video = sdl_setup.video_subsystem;
     let drawer_2d = Drawer2D::new(&gl, viewport).unwrap();
     let mut ui = Ui::new(drawer_2d);
 
     let mut event_pump = sdl.event_pump().unwrap();
 
-    // Set background color to white
-
+    // disable vsyn
+    video.gl_set_swap_interval(0).unwrap();
 
     let mut pattern = Pattern::default();
 
@@ -118,7 +118,7 @@ fn grid_ui(ctx: &mut Context, ui: &mut Ui) {
 
 fn old_ui(ctx: &mut Context, ui: &mut Ui) {
 
-    ui.body_text(&format!("{}", ui.fps()));
+    ui.body_text(&format!("{}", ui.fps() as i32));
     ui.newline();
 
 
@@ -379,5 +379,9 @@ impl Context {
             Cell::Color1 => self.color_1,
             _ => self.base_color
         }
+    }
+
+    pub fn top_length(&self) -> f32 {
+        (((self.pattern.cols(0)) - self.pattern.left_start(0)) as i32 * self.grid_width) as f32
     }
 }

@@ -8,3 +8,7 @@ edition = "2021"
 [dependencies]
 gl_lib = { path = "../rust-gl-lib"}
 failure = "0.1"
+
+# To make flamegraph useful
+[profile.release]
+debug = 1

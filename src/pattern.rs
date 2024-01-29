@@ -83,6 +83,7 @@ impl Pattern {
     pub fn left_start(&self, row: usize) -> usize {
         self.rows_data[row].left_offset
     }
+
 }
 
 
